@@ -1,23 +1,43 @@
 const http = require('http');
 const net = require('net');
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
 
 const PORT = process.env.SERVER_PORT || process.env.PORT || 25679;
 const INTERNAL_PORT = 8080;
 
-// 全局防崩溃捕获
-process.on('uncaughtException', (err) => console.error('[uncaughtException]:', err.message));
-process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]:', reason));
+// 1. 检查并自动拉起后台 Sing-box 内核
+function startCore() {
+  if (!fs.existsSync('./web')) {
+    console.log('[Core] 正在下载 Sing-box 核心文件...');
+    try {
+      execSync('curl -sL https://github.com/SagerNet/sing-box/releases/download/v1.8.10/sing-box-1.8.10-linux-amd64.tar.gz | tar -xz --strip-components=1 && mv sing-box web && chmod +x web');
+      console.log('[Core] 下载并安装成功');
+    } catch (e) {
+      console.error('[Core 下载失败]:', e.message);
+    }
+  }
 
-// 1. HTTP 基础响应
+  console.log('[Core] 正在拉起 Sing-box 进程...');
+  const core = spawn('./web', ['run', '-c', 'config.json']);
+  
+  core.stdout.on('data', (data) => console.log(`[Sing-box] ${data.toString().trim()}`));
+  core.stderr.on('data', (data) => console.error(`[Sing-box 错误] ${data.toString().trim()}`));
+  core.on('close', (code) => {
+    console.warn(`[Sing-box 进程退出] 退出码: ${code}，3秒后自动重启...`);
+    setTimeout(startCore, 3000);
+  });
+}
+
+startCore();
+
+// 2. HTTP 与 WebSocket 流量转发入口
 const server = http.createServer((req, res) => {
-  console.log(`[HTTP Request] ${req.method} ${req.url}`);
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end('<h1>Bot Runtime Active</h1>');
+  res.end('<h1>Native Node Active</h1>');
 });
 
-// 2. WebSocket 流量转发
 server.on('upgrade', (req, socket, head) => {
-  console.log(`[WS Upgrade] Path: ${req.url}`);
   if (req.url === '/vless-ws' || req.url.startsWith('/vless-ws')) {
     const targetSocket = net.connect(INTERNAL_PORT, '127.0.0.1', () => {
       targetSocket.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`);
@@ -32,7 +52,7 @@ server.on('upgrade', (req, socket, head) => {
     });
 
     targetSocket.on('error', (err) => {
-      console.error('[Sing-box Connection Error]:', err.message);
+      console.error('[转发 8080 失败, Sing-box 未就绪]:', err.message);
       socket.destroy();
     });
     socket.on('error', () => targetSocket.destroy());
@@ -41,7 +61,6 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 3. 不传 host 参数，使 Node.js 自动绑定所有接口 (Dual-Stack)
 server.listen(PORT, () => {
-  console.log(`[Engine] Node server successfully bound to port ${PORT} (Dual-Stack)`);
+  console.log(`[Engine] 原生中转节点启动完成，监听端口: ${PORT}`);
 });
