@@ -1,6 +1,6 @@
 {
   "log": {
-    "level": "warn"
+    "level": "info"
   },
   "inbounds": [
     {
@@ -10,8 +10,7 @@
       "listen_port": 8080,
       "users": [
         {
-          "uuid": "0febdf96-c364-4a8a-af2b-7707e102e31a",
-          "flow": ""
+          "uuid": "9798afef-b100-4bc0-808b-91491f85a913"
         }
       ],
       "transport": {
