@@ -6,7 +6,15 @@ const fs = require('fs');
 const PORT = process.env.SERVER_PORT || process.env.PORT || 25679;
 const INTERNAL_PORT = 8080;
 
-// 1. 检查并自动拉起后台 Sing-box 内核
+// 配置信息（根据实际情况填写）
+const UUID = '0febdf96-c364-4a8a-af2b-7707e102e31a';
+const DOMAIN = 'fi3.bot-hosting.net';
+
+// 全局防崩溃捕获
+process.on('uncaughtException', (err) => console.error('[uncaughtException]:', err.message));
+process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]:', reason));
+
+// 1. 检查并拉起 Sing-box 核心
 function startCore() {
   if (!fs.existsSync('./web')) {
     console.log('[Core] 正在下载 Sing-box 核心文件...');
@@ -20,18 +28,18 @@ function startCore() {
 
   console.log('[Core] 正在拉起 Sing-box 进程...');
   const core = spawn('./web', ['run', '-c', 'config.json']);
-  
+
   core.stdout.on('data', (data) => console.log(`[Sing-box] ${data.toString().trim()}`));
   core.stderr.on('data', (data) => console.error(`[Sing-box 错误] ${data.toString().trim()}`));
   core.on('close', (code) => {
-    console.warn(`[Sing-box 进程退出] 退出码: ${code}，3秒后自动重启...`);
+    console.warn(`[Sing-box 退出] 3秒后尝试自动重启...`);
     setTimeout(startCore, 3000);
   });
 }
 
 startCore();
 
-// 2. HTTP 与 WebSocket 流量转发入口
+// 2. HTTP 及 WS 代理转发服务
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end('<h1>Native Node Active</h1>');
@@ -52,7 +60,7 @@ server.on('upgrade', (req, socket, head) => {
     });
 
     targetSocket.on('error', (err) => {
-      console.error('[转发 8080 失败, Sing-box 未就绪]:', err.message);
+      console.error('[转发 8080 失败]:', err.message);
       socket.destroy();
     });
     socket.on('error', () => targetSocket.destroy());
@@ -61,6 +69,14 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
+// 3. 启动监听并打印节点链接
 server.listen(PORT, () => {
   console.log(`[Engine] 原生中转节点启动完成，监听端口: ${PORT}`);
+  
+  const nativeLink = `vless://${UUID}@${DOMAIN}:${PORT}?encryption=none&security=none&type=ws&host=${DOMAIN}&path=%2Fvless-ws#Native-Direct`;
+  
+  console.log('==================================================');
+  console.log('⚡【原生直连节点链接】：');
+  console.log(nativeLink);
+  console.log('==================================================');
 });
