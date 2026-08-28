@@ -1,4 +1,3 @@
-const http = require('http');
 const net = require('net');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
@@ -21,20 +20,6 @@ try {
     if (configData.inbounds?.[0]?.users?.[0]?.uuid) {
       UUID = configData.inbounds[0].users[0].uuid;
     }
-  } else {
-    const defaultConfig = {
-      log: { level: "info" },
-      inbounds: [{
-        type: "vless",
-        tag: "vless-in",
-        listen: "127.0.0.1",
-        listen_port: INTERNAL_PORT,
-        users: [{ uuid: UUID }],
-        transport: { type: "ws", path: "/vless-ws" }
-      }],
-      outbounds: [{ type: "direct", tag: "direct" }]
-    };
-    fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
   }
 } catch (e) {
   console.error('[Config Error]', e.message);
@@ -46,33 +31,18 @@ try {
   execSync('pkill -f npm-runner || true');
 } catch (e) {}
 
-// 3. HTTP 与 WebSocket 升级转发
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end('<h1>Server Active</h1>');
-});
-
-server.on('upgrade', (req, socket, head) => {
-  if (req.url && (req.url === '/vless-ws' || req.url.startsWith('/vless-ws'))) {
-    const targetSocket = net.connect(INTERNAL_PORT, '127.0.0.1', () => {
-      targetSocket.write(
-        `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
-        Object.keys(req.headers).map(k => `${k}: ${req.headers[k]}`).join('\r\n') +
-        '\r\n\r\n'
-      );
-      if (head && head.length) targetSocket.write(head);
-      socket.pipe(targetSocket);
-      targetSocket.pipe(socket);
-    });
-    targetSocket.on('error', () => socket.destroy());
-    socket.on('error', () => targetSocket.destroy());
-  } else {
-    socket.destroy();
-  }
+// 3. 纯 TCP 透明转发引擎（零损耗穿透，彻底解决 WebSocket 握手失败）
+const server = net.createServer((socket) => {
+  const targetSocket = net.connect(INTERNAL_PORT, '127.0.0.1', () => {
+    socket.pipe(targetSocket);
+    targetSocket.pipe(socket);
+  });
+  targetSocket.on('error', () => socket.destroy());
+  socket.on('error', () => targetSocket.destroy());
 });
 
 server.listen(PORT, () => {
-  console.log(`[Engine] HTTP Proxy listening on port: ${PORT}`);
+  console.log(`[Engine] Pure TCP Proxy listening on port: ${PORT}`);
 });
 
 // 4. 解密并拉取运行组件
@@ -110,7 +80,7 @@ if (fs.existsSync(BIN_CORE)) {
   runCore();
 }
 
-// 6. 运行 Cloudflare 隧道并输出同步后的节点
+// 6. 运行 Cloudflare 隧道并输出节点
 if (fs.existsSync(BIN_TUNNEL)) {
   const runTunnel = () => {
     console.log('[Tunnel] Starting Cloudflare Tunnel...');
