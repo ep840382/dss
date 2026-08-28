@@ -11,14 +11,20 @@ process.on('unhandledRejection', (reason) => console.error('[Warning]', reason))
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
 const INTERNAL_PORT = 8080;
 
-let UUID = '0febdf96-c364-4a8a-af2b-7707e102e31a';
+let UUID = '9798afef-b100-4bc0-808b-91491f85a913';
 try {
   const configFile = fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8');
   const configJson = JSON.parse(configFile);
+  
   if (configJson.inbounds?.[0]?.users?.[0]?.uuid) {
     UUID = configJson.inbounds[0].users[0].uuid;
+    console.log(`[信息] 已成功从 config.json 加载 UUID: ${UUID}`);
+  } else {
+    console.warn('[警告] config.json 中未找到正确的 UUID 路径，将使用默认 UUID');
   }
-} catch (e) {}
+} catch (e) {
+  console.error('[错误] 读取 config.json 失败, 原因:', e.message);
+}
 
 let currentCfDomain = '';
 
