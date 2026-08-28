@@ -4,8 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 // 优先监听内部 PORT，若无则监听 SERVER_PORT 或 3000
-const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
-const INTERNAL_PORT = 8080;
+const PORT = 3000;
+const INTERNAL_PORT = 9090;
 
 // 全局防崩溃捕获
 process.on('uncaughtException', (err) => console.error('[全局未捕获异常]:', err));
