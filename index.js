@@ -1,28 +1,48 @@
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 process.on('uncaughtException', (err) => console.error('[Error]', err.message));
 process.on('unhandledRejection', (reason) => console.error('[Error]', reason));
 
-// 1. 动态自动获取端口 (优先读取环境变量 SERVER_PORT / PORT)
+// 1. 动态自动获取分配端口
 const PORT = parseInt(process.env.SERVER_PORT || process.env.PORT || 3000);
 const configPath = path.join(__dirname, 'config.json');
 
-// 2. 动态自动获取当前容器真实的公网 IP / 域名 (彻底消除硬编码)
-let DOMAIN = '127.0.0.1';
-try {
-  if (process.env.SERVER_IP) {
-    DOMAIN = process.env.SERVER_IP;
-  } else {
-    // 请求外网 API 自动识别当前节点 IP
-    const fetchedIp = execSync('curl -s --max-time 3 https://api.ipify.org || curl -s --max-time 3 https://ifconfig.me', { encoding: 'utf8' }).trim();
-    if (fetchedIp && /^\d+\.\d+\.\d+\.\d+$/.test(fetchedIp)) {
-      DOMAIN = fetchedIp;
-    }
+// 2. 动态自动精准获取公网 IP / 域名 (严格过滤 0.0.0.0 及内网保留地址)
+let DOMAIN = '';
+
+const fetchPublicIP = () => {
+  const apis = [
+    'curl -sSL --max-time 3 https://api.ipify.org',
+    'curl -sSL --max-time 3 https://ifconfig.me',
+    'curl -sSL --max-time 3 https://icanhazip.com',
+    'curl -sSL --max-time 3 https://api.ip.sb/ip'
+  ];
+  for (const cmd of apis) {
+    try {
+      const ip = execSync(cmd, { encoding: 'utf8' }).trim();
+      // 匹配合法公网 IPv4，且排除 0.0.0.0 与 127.x.x.x
+      if (ip && /^(\d{1,3}\.){3}\d{1,3}$/.test(ip) && !ip.startsWith('0.') && !ip.startsWith('127.')) {
+        return ip;
+      }
+    } catch (e) {}
   }
-} catch (e) {
-  console.log('[Auto-Detect] 未能自动抓取 IP，回退至本地端口模式');
+  return null;
+};
+
+DOMAIN = fetchPublicIP();
+
+// 如果 API 抓取受限，自动从系统环境变量或主机名推断真实节点域名
+if (!DOMAIN) {
+  const envIp = process.env.SERVER_IP;
+  if (envIp && envIp !== '0.0.0.0' && envIp !== '127.0.0.1') {
+    DOMAIN = envIp;
+  } else {
+    const hostname = os.hostname();
+    DOMAIN = hostname ? `${hostname}.bot-hosting.cloud` : '127.0.0.1';
+  }
 }
 
 // 3. 清理残留进程
@@ -31,7 +51,7 @@ try {
   execSync('pkill -f npm-runner || true');
 } catch (e) {}
 
-// 4. 动态读取 config.json 中的 UUID，确保配置文件与运行实例 100% 同步
+// 4. 动态读取 config.json 中的 UUID
 let UUID = '0febdf96-c364-4a8a-af2b-7707e102e31a';
 
 try {
@@ -45,7 +65,7 @@ try {
   console.error('[Config Read Error]', e.message);
 }
 
-// 自动写入适配当前容器环境的 config.json
+// 自动写入配置文件 (Sing-box 本地监听 0.0.0.0 以接收流量)
 const finalConfig = {
   log: { level: "info" },
   inbounds: [{
@@ -84,7 +104,7 @@ if (!fs.existsSync(BIN_TUNNEL)) {
   } catch (e) { console.error('[Tunnel Download Failed]:', e.message); }
 }
 
-// 6. 启动 Sing-box 直接响应外部请求
+// 6. 启动 Sing-box
 if (fs.existsSync(BIN_CORE)) {
   const runCore = () => {
     console.log(`[Core] Launching Sing-box on port ${PORT}...`);
@@ -96,7 +116,7 @@ if (fs.existsSync(BIN_CORE)) {
   runCore();
 }
 
-// 7. 启动 Cloudflare 隧道并自动输出动态拼接好的节点
+// 7. 启动 Cloudflare 隧道并输出准确的节点地址
 if (fs.existsSync(BIN_TUNNEL)) {
   const runTunnel = () => {
     console.log('[Tunnel] Starting Cloudflare Tunnel...');
@@ -108,7 +128,7 @@ if (fs.existsSync(BIN_TUNNEL)) {
         printed = true;
         const sub = match[0].replace('https://', '');
         console.log('\n==================================================');
-        console.log(`[Auto-Detect] 自动读取节点外网地址: ${DOMAIN}:${PORT}`);
+        console.log(`[Auto-Detect] 自动精准抓取外网地址: ${DOMAIN}:${PORT}`);
         console.log(`[UUID Sync] 当前已生效 UUID: ${UUID}`);
         console.log('🚀【CF 隧道加密节点链接】:');
         console.log(`vless://${UUID}@${sub}:443?encryption=none&security=tls&sni=${sub}&type=ws&host=${sub}&path=%2Fvless-ws#CF-Tunnel`);
