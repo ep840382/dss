@@ -4,47 +4,61 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-process.on('uncaughtException', (err) => console.error('[Uncaught]', err.message));
-process.on('unhandledRejection', (reason) => console.error('[Rejection]', reason));
+process.on('uncaughtException', (err) => console.error('[Warning]', err.message));
+process.on('unhandledRejection', (reason) => console.error('[Warning]', reason));
 
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
+const PORT = process.env.SERVER_PORT || process.env.PORT || 25679;
 const INTERNAL_PORT = 8080;
 const UUID = '9798afef-b100-4bc0-808b-91491f85a913';
 
-// 1. 清理可能残留的后台进程，防止端口占用
-try {
-  execSync('pkill -f web || true');
-  execSync('pkill -f npm-runner || true');
-} catch (e) {}
-
-// 2. 自动清理旧配置并重新生成
+// 1. 确保自动生成与 25150 完全一致的 config.json
 const configPath = path.join(__dirname, 'config.json');
-const configData = {
-  log: { level: "info" },
-  inbounds: [{
-    type: "vless",
-    tag: "vless-in",
-    listen: "127.0.0.1",
-    listen_port: INTERNAL_PORT,
-    users: [{ uuid: UUID }],
-    transport: { type: "ws", path: "/vless-ws" }
-  }],
-  outbounds: [{ type: "direct", tag: "direct" }]
-};
-fs.writeFileSync(configPath, JSON.stringify(configData, null, 2));
+if (!fs.existsSync(configPath)) {
+  const configData = {
+    log: { level: "info" },
+    inbounds: [{
+      type: "vless",
+      tag: "vless-in",
+      listen: "127.0.0.1",
+      listen_port: INTERNAL_PORT,
+      users: [{ uuid: UUID }],
+      transport: { type: "ws", path: "/vless-ws" }
+    }],
+    outbounds: [{ type: "direct", tag: "direct" }]
+  };
+  fs.writeFileSync(configPath, JSON.stringify(configData, null, 2));
+}
 
-// 3. 监听外层端口保持面板健康检查
-const server = net.createServer((clientSocket) => {
-  const targetSocket = net.connect(INTERNAL_PORT, '127.0.0.1', () => {
-    clientSocket.pipe(targetSocket);
-    targetSocket.pipe(clientSocket);
-  });
-  clientSocket.on('error', () => targetSocket.destroy());
-  targetSocket.on('error', () => clientSocket.destroy());
+// 2. 还原 25150 部署成功的 HTTP 及 WebSocket 升级转发机制
+const server = http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end('<h1>Bot Runtime Active</h1>');
 });
-server.listen(PORT, () => console.log(`[Engine] Health Check Listening on Port: ${PORT}`));
 
-// 4. 解密并准备执行文件
+server.on('upgrade', (req, socket, head) => {
+  if (req.url === '/vless-ws' || req.url.startsWith('/vless-ws')) {
+    const targetSocket = net.connect(INTERNAL_PORT, '127.0.0.1', () => {
+      targetSocket.write(
+        `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+        Object.keys(req.headers).map(k => `${k}: ${req.headers[k]}`).join('\r\n') +
+        '\r\n\r\n'
+      );
+      if (head && head.length) targetSocket.write(head);
+      socket.pipe(targetSocket);
+      targetSocket.pipe(socket);
+    });
+    targetSocket.on('error', () => socket.destroy());
+    socket.on('error', () => targetSocket.destroy());
+  } else {
+    socket.destroy();
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`[Engine] Successfully listening on port: ${PORT}`);
+});
+
+// 3. 解密并拉起后台服务
 const decode = (str) => Buffer.from(str, 'base64').toString('utf-8');
 const URL_CORE = decode('aHR0cHM6Ly9naXRodWIuY29tL1NhZ2VyTmV0L3NpbmctYm94L3JlbGVhc2VzL2Rvd25sb2FkL3YxLjkuMy9zaW5nLWJveC0xLjkuMy1saW51eC1hbWQ2NC50YXIuZ3o=');
 const URL_TUNNEL = decode('aHR0cHM6Ly9naXRodWIuY29tL2Nsb3VkZmxhcmUvY2xvdWRmbGFyZWQvcmVsZWFzZXMvbGF0ZXN0L2Rvd25sb2FkL2Nsb3VkZmxhcmVkLWxpbnV4LWFtZDY0');
@@ -60,7 +74,6 @@ if (!fs.existsSync(BIN_TUNNEL)) {
   try { execSync(`curl -A "${ua}" -sSL -o ${BIN_TUNNEL} "${URL_TUNNEL}" && chmod +x ${BIN_TUNNEL}`); } catch (e) {}
 }
 
-// 5. 启动 Sing-box 内核并实时打印日志
 if (fs.existsSync(BIN_CORE)) {
   const runCore = () => {
     const sb = spawn(BIN_CORE, ['run', '-c', 'config.json']);
@@ -71,7 +84,6 @@ if (fs.existsSync(BIN_CORE)) {
   runCore();
 }
 
-// 6. 启动 Cloudflare 隧道并打印链接
 if (fs.existsSync(BIN_TUNNEL)) {
   const runTunnel = () => {
     const cf = spawn(BIN_TUNNEL, ['tunnel', '--url', `http://127.0.0.1:${INTERNAL_PORT}`]);
@@ -81,14 +93,11 @@ if (fs.existsSync(BIN_TUNNEL)) {
       if (match && !printed) {
         printed = true;
         const currentCfDomain = match[0].replace('https://', '');
-        const cfVlessLink = `vless://${UUID}@${currentCfDomain}:443?encryption=none&security=tls&sni=${currentCfDomain}&type=ws&host=${currentCfDomain}&path=%2Fvless-ws#CF-Tunnel`;
-        const nativeLink = `vless://${UUID}@fi3.bot-hosting.net:${PORT}?encryption=none&security=none&type=ws&path=%2Fvless-ws#Native-Direct`;
-
         console.log('\n==================================================');
         console.log('🚀【CF 隧道加速节点链接】:');
-        console.log(cfVlessLink);
+        console.log(`vless://${UUID}@${currentCfDomain}:443?encryption=none&security=tls&sni=${currentCfDomain}&type=ws&host=${currentCfDomain}&path=%2Fvless-ws#CF-Tunnel`);
         console.log('\n⚡【原生直连节点链接】:');
-        console.log(nativeLink);
+        console.log(`vless://${UUID}@fi3.bot-hosting.net:${PORT}?encryption=none&security=none&type=ws&path=%2Fvless-ws#Native-Direct`);
         console.log('==================================================\n');
       }
     });
