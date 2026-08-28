@@ -11,7 +11,7 @@ process.on('unhandledRejection', (reason) => console.error('[Warning]', reason))
 const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
 const INTERNAL_PORT = 8080;
 
-let UUID = '9798afef-b100-4bc0-808b-91491f85a913';
+let UUID = '0febdf96-c364-4a8a-af2b-7707e102e31a';
 try {
   const configFile = fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8');
   const configJson = JSON.parse(configFile);
